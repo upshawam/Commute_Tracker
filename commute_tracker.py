@@ -12,6 +12,10 @@ import time
 import schedule
 import googlemaps
 from collections import defaultdict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class CommuteTracker:
