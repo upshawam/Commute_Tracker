@@ -4,11 +4,9 @@ Commute Tracker - A smart commute tracking application
 Monitors commute times and suggests optimal departure times
 """
 
-import json
 import os
-import sys
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from datetime import datetime
+from typing import List, Dict, Optional
 import sqlite3
 import time
 import schedule
@@ -134,13 +132,26 @@ class CommuteTracker:
         conn.close()
         return addresses
     
-    def delete_address(self, address_id: int):
-        """Delete an address by ID"""
+    def delete_address(self, address_id: int) -> bool:
+        """
+        Delete an address by ID
+        
+        Returns:
+            True if address was deleted, False if it didn't exist
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        
+        # Check if address exists
+        cursor.execute('SELECT id FROM addresses WHERE id = ?', (address_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return False
+        
         cursor.execute('DELETE FROM addresses WHERE id = ?', (address_id,))
         conn.commit()
         conn.close()
+        return True
     
     def poll_commute_times(self):
         """
@@ -257,7 +268,21 @@ class CommuteTracker:
         
         Returns:
             List of recommendations by day of week
+        
+        Raises:
+            ValueError: If target_arrival is not in HH:MM format
         """
+        # Validate target_arrival format
+        try:
+            parts = target_arrival.split(':')
+            if len(parts) != 2:
+                raise ValueError
+            target_hour, target_minute = int(parts[0]), int(parts[1])
+            if not (0 <= target_hour <= 23 and 0 <= target_minute <= 59):
+                raise ValueError
+        except (ValueError, AttributeError):
+            raise ValueError(f"Invalid time format '{target_arrival}'. Expected HH:MM (e.g., 09:00)")
+        
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -278,9 +303,6 @@ class CommuteTracker:
         
         if not data:
             return []
-        
-        # Parse target arrival time
-        target_hour, target_minute = map(int, target_arrival.split(':'))
         target_minutes = target_hour * 60 + target_minute
         
         # Organize by day of week
@@ -424,8 +446,10 @@ def main():
                 print(f"{addr['id']:<5} {addr['type']:<10} {addr['label']:<20} {addr['address']}")
     
     elif args.command == 'delete':
-        tracker.delete_address(args.id)
-        print(f"Deleted address with ID {args.id}")
+        if tracker.delete_address(args.id):
+            print(f"Deleted address with ID {args.id}")
+        else:
+            print(f"Error: Address with ID {args.id} not found")
     
     elif args.command == 'poll':
         print("Polling current commute times...")
@@ -449,19 +473,22 @@ def main():
             print("\nMonitoring stopped")
     
     elif args.command == 'recommend':
-        recommendations = tracker.get_optimal_departure_times(
-            args.origin_id, args.destination_id, args.arrival
-        )
-        
-        if not recommendations:
-            print("Not enough data yet. Run 'monitor' to collect commute data.")
-        else:
-            print(f"\nOptimal departure times to arrive by {args.arrival}:")
-            print(f"\n{'Day':<12} {'Depart':<10} {'Duration':<12} Data Points")
-            print("-" * 60)
-            for rec in recommendations:
-                print(f"{rec['day']:<12} {rec['optimal_departure']:<10} "
-                      f"{rec['expected_duration_minutes']} min{'':<7} {rec['data_points']}")
+        try:
+            recommendations = tracker.get_optimal_departure_times(
+                args.origin_id, args.destination_id, args.arrival
+            )
+            
+            if not recommendations:
+                print("Not enough data yet. Run 'monitor' to collect commute data.")
+            else:
+                print(f"\nOptimal departure times to arrive by {args.arrival}:")
+                print(f"\n{'Day':<12} {'Depart':<10} {'Duration':<12} Data Points")
+                print("-" * 60)
+                for rec in recommendations:
+                    print(f"{rec['day']:<12} {rec['optimal_departure']:<10} "
+                          f"{rec['expected_duration_minutes']} min{'':<7} {rec['data_points']}")
+        except ValueError as e:
+            print(f"Error: {e}")
     
     elif args.command == 'stats':
         stats = tracker.get_statistics(args.origin_id, args.destination_id)
